@@ -16,14 +16,16 @@ git commit -m "TeamFlow: full-stack task manager"
 git branch -M main
 ```
 
-Create a new repo on GitHub (https://github.com/new) named e.g. `team-task-manager`, then:
+Repository: **https://github.com/kajal-yadav0612/Teamflow**
+
+To push future updates:
 
 ```powershell
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/team-task-manager.git
-git push -u origin main
+cd "c:\Users\hp\New folder"
+git add .
+git commit -m "Your message"
+git push
 ```
-
-Replace `YOUR_GITHUB_USERNAME` with your GitHub username.
 
 ---
 
