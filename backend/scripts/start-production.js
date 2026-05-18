@@ -1,66 +1,105 @@
 /**
- * Production start — builds DATABASE_URL from Railway MongoDB vars if needed.
+ * Production start — finds a working MongoDB URL, syncs schema, starts API.
  */
 import { execSync } from 'child_process';
+import { MongoClient } from 'mongodb';
 import 'dotenv/config';
 
-function ensureDatabaseName(urlString) {
-  const parsed = new URL(urlString);
-  parsed.pathname = '/team_task_manager';
-  return parsed.href;
-}
+function buildUrlVariants(raw) {
+  const variants = new Set();
+  const base = raw.trim();
 
-function resolveDatabaseUrl() {
-  const direct = process.env.DATABASE_URL?.trim();
+  if (!base.startsWith('mongodb')) return variants;
 
-  if (direct && direct.startsWith('mongodb') && !direct.includes('${{')) {
-    return direct.includes('team_task_manager') ? direct : ensureDatabaseName(direct);
+  variants.add(base);
+
+  // Host + credentials only (strip path/query)
+  const hostMatch = base.match(/^(mongodb(?:\+srv)?:\/\/[^/]+)/);
+  if (hostMatch) {
+    const host = hostMatch[1];
+    variants.add(`${host}/team_task_manager`);
+    variants.add(`${host}/team_task_manager?authSource=admin`);
+    variants.add(`${host}/team_task_manager?directConnection=true&authSource=admin`);
   }
 
-  // Prefer private URL (same Railway network) — public URL often causes auth issues
-  const candidates = [
-    process.env.MONGO_PRIVATE_URL,
-    process.env.MONGO_URL,
-    process.env.MONGODB_URL,
-    process.env.MONGO_PUBLIC_URL,
-  ].filter(Boolean);
+  // Replace existing database name in path
+  if (base.includes('/')) {
+    const replaced = base.replace(/\/[^/?]+(\?|$)/, '/team_task_manager$1');
+    variants.add(replaced);
+    if (!replaced.includes('authSource')) {
+      variants.add(replaced.includes('?') ? `${replaced}&authSource=admin` : `${replaced}?authSource=admin`);
+    }
+  } else {
+    variants.add(`${base}/team_task_manager`);
+    variants.add(`${base}/team_task_manager?authSource=admin`);
+  }
 
-  for (const raw of candidates) {
-    const url = raw.trim();
-    if (url.startsWith('mongodb')) {
-      return url.includes('team_task_manager') ? url : ensureDatabaseName(url);
+  return [...variants];
+}
+
+function collectRawUrls() {
+  const keys = [
+    'DATABASE_URL',
+    'MONGO_PRIVATE_URL',
+    'MONGO_URL',
+    'MONGODB_URL',
+    'MONGO_PUBLIC_URL',
+  ];
+
+  return keys
+    .map((k) => process.env[k]?.trim())
+    .filter((u) => u && u.startsWith('mongodb') && !u.includes('${{'));
+}
+
+async function findWorkingUrl() {
+  const rawUrls = collectRawUrls();
+  const candidates = rawUrls.flatMap(buildUrlVariants);
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  for (const url of candidates) {
+    const client = new MongoClient(url, { serverSelectionTimeoutMS: 10000 });
+    try {
+      await client.connect();
+      await client.db('team_task_manager').command({ ping: 1 });
+      await client.close();
+      return url;
+    } catch {
+      try {
+        await client.close();
+      } catch {
+        /* ignore */
+      }
     }
   }
 
   return null;
 }
 
-const databaseUrl = resolveDatabaseUrl();
+const databaseUrl = await findWorkingUrl();
 
 if (!databaseUrl) {
   console.error('\n========================================');
-  console.error('  DATABASE_URL / MONGO_URL not found');
+  console.error('  Could not connect to MongoDB');
   console.error('========================================\n');
-  console.error('Do ONE of these on Railway:\n');
-  console.error('OPTION A — Link MongoDB (easiest):');
-  console.error('  1. Click MongoDB service');
-  console.error('  2. Click "Connect" or "Variables" → "Service Variables"');
-  console.error('  3. Connect to gallant-warmth (your backend)');
-  console.error('  4. Redeploy gallant-warmth\n');
-  console.error('OPTION B — Manual variable:');
-  console.error('  1. MongoDB → Variables → copy MONGO_URL');
-  console.error('  2. gallant-warmth → Variables → add DATABASE_URL');
-  console.error('  3. Value = <paste>/team_task_manager\n');
+  console.error('On Railway → gallant-warmth → Variables:\n');
+  console.error('1. Open MongoDB service → Variables → copy MONGO_URL');
+  console.error('2. On gallant-warmth add variable:');
+  console.error('   Name:  MONGO_URL');
+  console.error('   Value: (paste exact copy from MongoDB — do not edit password)\n');
+  console.error('3. Redeploy gallant-warmth\n');
   process.exit(1);
 }
 
 process.env.DATABASE_URL = databaseUrl;
-console.log('Database URL configured for team_task_manager');
+console.log('MongoDB connected. Syncing schema...');
 
 try {
   execSync('npx prisma db push --skip-generate', { stdio: 'inherit', env: process.env });
-} catch {
-  console.error('\nCould not connect to MongoDB. Check MONGO_URL and that MongoDB is Online.\n');
+} catch (err) {
+  console.error('Schema sync failed:', err.message);
   process.exit(1);
 }
 
