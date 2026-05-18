@@ -1,0 +1,4 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "note": "Deploy backend and frontend as separate services with root directories backend/ and frontend/"
+}
