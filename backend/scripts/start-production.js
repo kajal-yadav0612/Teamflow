@@ -17,12 +17,12 @@ function resolveDatabaseUrl() {
     return direct.includes('team_task_manager') ? direct : ensureDatabaseName(direct);
   }
 
-  // Railway MongoDB plugin injects these when services are linked
+  // Prefer private URL (same Railway network) — public URL often causes auth issues
   const candidates = [
-    process.env.MONGO_URL,
     process.env.MONGO_PRIVATE_URL,
-    process.env.MONGO_PUBLIC_URL,
+    process.env.MONGO_URL,
     process.env.MONGODB_URL,
+    process.env.MONGO_PUBLIC_URL,
   ].filter(Boolean);
 
   for (const raw of candidates) {
